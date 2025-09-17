@@ -1,11 +1,11 @@
 // ---------- Insert Your Data ---------- //
 
-const BOT_TOKEN = "7869462803:AAGYnD66f2fpV5R6t6dGNTfBBBTTf1ULJ6k"; // Insert your bot token.
+const BOT_TOKEN = "8077079325:AAGmPIi1Gv-x9i5PsgcUXqVMmsTNqjDzghY"; // Insert your bot token.
 const BOT_WEBHOOK = "/endpoint"; // Let it be as it is.
 const BOT_SECRET = "My$tr0ngSecre7K3y"; // Insert a powerful secret text.
-const BOT_CHANNEL = -1002500361166; // Insert your telegram channel id which the bot is admin in.
-const SIA_NUMBER = 912839; // Insert a random integer number and keep it safe.
-const BOT_OWNER = "1129730859"; // Not numeric ID, use username for clickable button.
+const BOT_CHANNEL = -1002742792076; // Insert your telegram channel id which the bot is admin in. (Not strictly needed for direct links, but can be used for logging/storage if desired)
+// const SIA_NUMBER = 912839; // No longer needed
+const BOT_OWNER = "7962617461"; // Not numeric ID, use username for clickable button.
 // ----------Ohh Bhai Do Not Modify ---------- // 
 
 const WHITE_METHODS = ["GET", "POST", "HEAD"];
@@ -25,7 +25,7 @@ addEventListener('fetch', event => {
 
 async function handleRequest(event) {
     const url = new URL(event.request.url);
-    const file = url.searchParams.get('file');
+    const encodedFileId = url.searchParams.get('file'); // Now this holds the base64 encoded Telegram file_id
     const mode = url.searchParams.get('mode') || "attachment";
      
     if (url.pathname === BOT_WEBHOOK) {return handleWebhook(event);}
@@ -33,25 +33,55 @@ async function handleRequest(event) {
     if (url.pathname === '/unregisterWebhook') {return unregisterWebhook(event);}
     if (url.pathname === '/getMe') {return new Response(JSON.stringify(await getMe()), {headers: HEADERS_ERRR, status: 202});}
 
-    if (!file) {return Raise(ERROR_404, 404);}
+    if (!encodedFileId) {return Raise(ERROR_404, 404);}
     if (!["attachment", "inline"].includes(mode)) {return Raise(ERROR_408, 404);}
     if (!WHITE_METHODS.includes(event.request.method)) {return Raise(ERROR_405, 405);}
-    try {atob(file);} catch {return Raise(ERROR_407, 404);}
+    
+    let file_id;
+    try {
+        file_id = atob(encodedFileId); // Decode to get the actual Telegram file_id
+    } catch {
+        return Raise(ERROR_407, 404);
+    }
 
-    const file_path = atob(file);
-    const channel_id = parseInt(file_path.split('/')[0]) / -SIA_NUMBER;
-    const file_id = parseInt(file_path.split('/')[1]) / SIA_NUMBER;
-    const retrieve = await RetrieveFile(channel_id, file_id);
-    if (retrieve.error_code) {return await Raise(retrieve, retrieve.error_code);}
+    const fileDetails = await getFile(file_id);
+    if (fileDetails.error_code) {
+        return await Raise(fileDetails, fileDetails.error_code);
+    }
 
-    const rdata = retrieve[0];
-    const rname = retrieve[1];
-    const rsize = retrieve[2];
-    const rtype = retrieve[3];
+    // Attempt to infer file name and type if not explicitly available from getFile
+    // getFile usually provides file_path, but not always original file_name or mime_type directly.
+    // We'll try to infer from the file_path extension or use a generic one.
+    const file_path_parts = fileDetails.file_path.split('/');
+    const original_filename_from_tg = file_path_parts[file_path_parts.length - 1]; // e.g., 'document/file_123.pdf' -> 'file_123.pdf'
+
+    const rdata = await fetchFile(fileDetails.file_path);
+    const rname = original_filename_from_tg || "file"; // Use original filename from Telegram or generic
+    const rsize = fileDetails.file_size || rdata.byteLength;
+    let rtype = "application/octet-stream"; // Default generic type
+
+    // Attempt to infer mime type from filename extension
+    const ext = rname.split('.').pop().toLowerCase();
+    switch (ext) {
+        case 'jpg': case 'jpeg': rtype = 'image/jpeg'; break;
+        case 'png': rtype = 'image/png'; break;
+        case 'gif': rtype = 'image/gif'; break;
+        case 'pdf': rtype = 'application/pdf'; break;
+        case 'mp4': rtype = 'video/mp4'; break;
+        case 'mp3': rtype = 'audio/mpeg'; break;
+        case 'zip': rtype = 'application/zip'; break;
+        case 'txt': rtype = 'text/plain'; break;
+        // Add more types as needed
+    }
+
+    // Note: Telegram's getFile does not directly return mime_type.
+    // For more robust type detection, you might need a library or
+    // rely on the initial message's mime_type if you stored it.
+    // For now, inferring from extension or using octet-stream is a reasonable fallback.
 
     return new Response(rdata, {
         status: 200, headers: {
-            "Content-Disposition": `${mode}; filename=${rname}`, // inline;
+            "Content-Disposition": `${mode}; filename=${rname}`,
             "Content-Length": rsize,
             "Content-Type": rtype,
             ...HEADERS_FILE
@@ -59,46 +89,8 @@ async function handleRequest(event) {
     });
 }
 
-// ---------- Retrieve File ---------- //
-
-async function RetrieveFile(channel_id, message_id) {
-    let  fID; let fName; let fType; let fSize; let fLen;
-    let data = await editMessage(channel_id, message_id, await UUID());
-    if (data.error_code) {return data;}
-    
-    if (data.document) {
-        fLen = data.document.length - 1;
-        fID = data.document.file_id;
-        fName = data.document.file_name;
-        fType = data.document.mime_type;
-        fSize = data.document.file_size;
-    } else if (data.audio) {
-        fLen = data.audio.length - 1;
-        fID = data.audio.file_id;
-        fName = data.audio.file_name;
-        fType = data.audio.mime_type;
-        fSize = data.audio.file_size;
-    } else if (data.video) {
-        fLen = data.video.length - 1;
-        fID = data.video.file_id;
-        fName = data.video.file_name;
-        fType = data.video.mime_type;
-        fSize = data.video.file_size;
-    } else if (data.photo) {
-        fLen = data.photo.length - 1;
-        fID = data.photo[fLen].file_id;
-        fName = data.photo[fLen].file_unique_id + '.jpg';
-        fType = "image/jpg";
-        fSize = data.photo[fLen].file_size;
-    } else {
-        return ERROR_406;
-    }
-
-    const file = await getFile(fID);
-    if (file.error_code) {return file;}
-
-    return [await fetchFile(file.file_path), fName, fSize, fType];
-}
+// ---------- Retrieve File - No longer needed in its original form ---------- //
+// This function is removed as its logic was problematic for larger files and direct file_id handling.
 
 // ---------- Raise Error ---------- //
 
@@ -106,14 +98,13 @@ async function Raise(json_error, status_code) {
     return new Response(JSON.stringify(json_error), { headers: HEADERS_ERRR, status: status_code });
 }
 
-// ---------- UUID Generator ---------- //
-
-async function UUID() {
-    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
-        var r = Math.random() * 16 | 0, v = c == 'x' ? r : (r & 0x3 | 0x8);
-        return v.toString(16);
-    });
-}
+// ---------- UUID Generator - No longer needed for file paths ---------- //
+// async function UUID() {
+//     return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+//         var r = Math.random() * 16 | 0, v = c == 'x' ? r : (r & 0x3 | 0x8);
+//         return v.toString(16);
+//     });
+// }
 
 // ---------- Telegram Webhook ---------- // 
 
@@ -180,11 +171,14 @@ async function sendPhoto(chat_id, file_id) {
     else {return await response.json();}
 }
 
-async function editMessage(channel_id, message_id, caption_text) {
+// editMessage function for caption change is not directly used for file retrieval anymore
+// It remains here if you need to edit captions of messages in the channel.
+async function editMessageCaption(channel_id, message_id, caption_text) {
     const response = await fetch(apiUrl('editMessageCaption', {chat_id: channel_id, message_id: message_id, caption: caption_text}));
     if (response.status == 200) {return (await response.json()).result;}
     else {return await response.json();}
 }
+
 
 async function getFile(file_id) {
     const response = await fetch(apiUrl('getFile', {file_id: file_id}));
@@ -210,37 +204,51 @@ async function onUpdate(event, update) {
 }
 
 async function onMessage(event, message) {
-    let fID; let fName; let fSave; let fType;
+    let fID; let fName; let fType; let fSize;
     let url = new URL(event.request.url);
     let bot = await getMe();
     const firstName = message.from.first_name;
-    if (message.chat.id.toString().includes("-100")) {
+    
+    // Ignore messages from channels (unless you specifically want to handle them)
+    // The previous check message.chat.id.toString().includes("-100") is fine for this.
+    if (message.chat.id.toString().startsWith("-100")) {
         return;
     }
 
     if (message.text && message.text.startsWith("/start ")) {
-        const file = message.text.split("/start ")[1];
-        try { atob(file); } catch { return await sendMessage(message.chat.id, message.message_id, ERROR_407.description); }
+        const encodedFileId = message.text.split("/start ")[1];
+        let file_id_from_start;
+        try { 
+            file_id_from_start = atob(encodedFileId); 
+        } catch { 
+            return await sendMessage(message.chat.id, message.message_id, ERROR_407.description); 
+        }
         
-        const file_path = atob(file);
-        const channel_id = parseInt(file_path.split('/')[0]) / -SIA_NUMBER;
-        const message_id = parseInt(file_path.split('/')[1]) / SIA_NUMBER;
-        const data = await editMessage(channel_id, message_id, await UUID());
+        // When a user clicks /start with a file_id, we just send them the file back.
+        // We don't need to save it again or query `editMessage`.
+        // We need to determine the file type to send it correctly.
+        const fileDetails = await getFile(file_id_from_start);
+        if (fileDetails.error_code) {
+             return sendMessage(message.chat.id, message.message_id, `Error retrieving file: ${fileDetails.description}`);
+        }
 
-        if (data.document) {
-            fID = data.document.file_id;
-            return await sendDocument(message.chat.id, fID);
-        } else if (data.audio) {
-            fID = data.audio.file_id;
-            return await sendDocument(message.chat.id, fID);
-        } else if (data.video) {
-            fID = data.video.file_id;
-            return await sendDocument(message.chat.id, fID);
-        } else if (data.photo) {
-            fID = data.photo[data.photo.length - 1].file_id;
-            return await sendPhoto(message.chat.id, fID);
-        } else {
-            return sendMessage(message.chat.id, message.message_id, "Bad Request: File not found");
+        // Infer file type from file_path to send with appropriate method
+        const file_path_extension = fileDetails.file_path.split('.').pop().toLowerCase();
+        
+        if (['jpg', 'jpeg', 'png', 'gif'].includes(file_path_extension)) {
+            return await sendPhoto(message.chat.id, file_id_from_start);
+        } else if (['mp4', 'mov', 'avi', 'mkv', 'webm'].includes(file_path_extension)) {
+            return await sendMessage(message.chat.id, message.message_id, "Video files are usually sent as documents for large sizes. Please use the download link.");
+            // Or if you want to send as video: return await sendVideo(message.chat.id, file_id_from_start);
+            // You might need a sendVideo function if you want to support it.
+        } else if (['mp3', 'wav', 'ogg'].includes(file_path_extension)) {
+            return await sendMessage(message.chat.id, message.message_id, "Audio files are usually sent as documents for large sizes. Please use the download link.");
+            // Or if you want to send as audio: return await sendAudio(message.chat.id, file_id_from_start);
+            // You might need a sendAudio function if you want to support it.
+        }
+        else {
+            // Default to sending as a document for any other file type
+            return await sendDocument(message.chat.id, file_id_from_start);
         }
     }
 
@@ -259,50 +267,53 @@ async function onMessage(event, message) {
 
     if (message.text === "/help") {
         const helpText = `📖 *How Zara Works*\n\n` +
-        `📤 *Send me any file* (video, audio, image, document — anything up to *4GB*)\n\n` +
+        `📤 *Send me any file* (video, audio, image, document — anything up to *2GB*)\n\n` + // Updated to 2GB
         `📥 I’ll give you:\n` +
         `🔗 A *direct download link*\n` +
-        `📺 A *stream link* (for files less than 20MB)\n` +
+        `📺 A *stream link* (for files < 20MB, larger files will download)\n` + // Clarified streaming
         `📬 A *Telegram link* you can share\n\n` +
         `💡 *No need for your friends to have Telegram!* Just send them the link — they can download or stream the file in their browser, like any normal website.\n\n` +
         `🌐 *Works like magic*: Upload here ➜ Get a link ➜ Share anywhere.\n\n` +
-        `⚠️ Note: Files above 20MB won’t stream, but can still be downloaded.\n\n` +
+        `⚠️ Note: Files above ~20MB might not stream directly in browser, but will be downloaded. Telegram Bot API limits direct upload to 50MB, but direct links from existing file_ids support up to 2GB.\n\n` + // Clarified limits
         `Need help? Type /start again or tap “Contact Owner” to reach me.`;
     
         return sendMessage(message.chat.id,message.message_id, helpText);
     }
     
-    
-
-  
-
+    // Extract file details from the message directly
     if (message.document) {
         fID = message.document.file_id;
-        fName = message.document.file_name;
-        fType = message.document.mime_type.split("/")[0];
-        fSave = await sendDocument(BOT_CHANNEL, fID);
+        fName = message.document.file_name || "document";
+        fType = message.document.mime_type || "application/octet-stream";
+        fSize = message.document.file_size;
     } else if (message.audio) {
         fID = message.audio.file_id;
-        fName = message.audio.file_name;
-        fType = message.audio.mime_type.split("/")[0];
-        fSave = await sendDocument(BOT_CHANNEL, fID);
+        fName = message.audio.file_name || "audio";
+        fType = message.audio.mime_type || "audio/mpeg";
+        fSize = message.audio.file_size;
     } else if (message.video) {
         fID = message.video.file_id;
-        fName = message.video.file_name;
-        fType = message.video.mime_type.split("/")[0];
-        fSave = await sendDocument(BOT_CHANNEL, fID);
+        fName = message.video.file_name || "video";
+        fType = message.video.mime_type || "video/mp4";
+        fSize = message.video.file_size;
     } else if (message.photo) {
-        fID = message.photo[message.photo.length - 1].file_id;
-        fName = message.photo[message.photo.length - 1].file_unique_id + '.jpg';
-        fType = "image/jpg".split("/")[0];
-        fSave = await sendPhoto(BOT_CHANNEL, fID);
+        // Photos come in different sizes, take the largest one
+        const largestPhoto = message.photo.reduce((prev, current) => (prev.file_size > current.file_size) ? prev : current);
+        fID = largestPhoto.file_id;
+        fName = largestPhoto.file_unique_id + '.jpg'; // Telegram doesn't provide original photo filename
+        fType = "image/jpeg";
+        fSize = largestPhoto.file_size;
     } else {
-        return sendMessage(message.chat.id, message.message_id, "⚡️ Send me any file/video/gif/audio (t<=4GB, e<=20MB)");
+        return sendMessage(message.chat.id, message.message_id, "⚡️ Send me any file/video/gif/audio (up to 2GB)");
     }
 
-    if (fSave.error_code) { return sendMessage(message.chat.id, message.message_id, fSave.description); }
+    // Now, we have the fID (Telegram's file_id), fName, fType, and fSize directly from the message.
+    // We don't need to re-save to BOT_CHANNEL or use `editMessage` to get these details again.
+    // The `file_id` itself is enough to generate the links.
 
-    const final_hash = (btoa(fSave.chat.id * -SIA_NUMBER + "/" + fSave.message_id * SIA_NUMBER)).replace(/=/g, "");
+    // Base64 encode the Telegram file_id
+    const final_hash = btoa(fID).replace(/=/g, "");
+    
     const final_link = `${url.origin}/?file=${final_hash}`;
     const final_stre = `${url.origin}/?file=${final_hash}&mode=inline`;
     const final_tele = `https://t.me/${bot.username}/?start=${final_hash}`;
@@ -321,8 +332,19 @@ async function onMessage(event, message) {
     };
 
     // Construct the message text
-    let final_text = `*📁 File Name:* \`${fName}\`\n*⚙️ File Hash:* \`${final_hash}\`\n`;
+    let final_text = `*📁 File Name:* \`${fName}\`\n*⚙️ File Size:* \`${formatBytes(fSize)}\`\n*⚙️ File Hash:* \`${final_hash}\`\n`;
 
     // Send the message with the inline keyboard
     return sendMessageWithButtons(message.chat.id, message.message_id, final_text, inlineKeyboard);
+}
+
+
+// Helper function to format file size
+function formatBytes(bytes, decimals = 2) {
+    if (bytes === 0) return '0 Bytes';
+    const k = 1024;
+    const dm = decimals < 0 ? 0 : decimals;
+    const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + ' ' + sizes[i];
 }
